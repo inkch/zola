@@ -3258,6 +3258,7 @@ dependencies = [
  "open",
  "percent-encoding",
  "relative-path",
+ "search",
  "serde_json",
  "site",
  "termcolor",
