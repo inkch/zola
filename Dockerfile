@@ -8,7 +8,7 @@ RUN apt-get update -y && \
 WORKDIR /app
 COPY . .
 
-RUN cargo build --release --target x86_64-unknown-linux-gnu
+RUN cargo build --release --target x86_64-unknown-linux-gnu --features search/indexing-ja
 
 RUN mv target/x86_64-unknown-linux-gnu/release/zola /usr/bin
 RUN mkdir -p /workdir
@@ -16,6 +16,8 @@ WORKDIR /workdir
 RUN dockerize -n  -o /workdir  /usr/bin/zola
 
 
-FROM scratch
+FROM alpine
 COPY --from=builder /workdir .
-ENTRYPOINT [ "/usr/bin/zola" ]
+# CMD [ "/usr/bin/zola", "build" ]
+# ENTRYPOINT [ "/usr/bin/zola" ]
+# ENTRYPOINT [ "/bin/sh" ]
