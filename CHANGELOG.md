@@ -1,5 +1,22 @@
 # Changelog
 
+## unreleased
+
+### Breaking
+
+- Newlines are now required after the closing `+++` of front-matter
+
+### Other
+
+- internal links are now resolved in the `markdown` filter in the templates (#1296 #1316)
+- Add a `required` argument to `load_data` so it can be allowed to fail
+- `get_file_hash` now supports returning the base64 encoded hash
+- the `markdown` filter not renders shortcodes
+- Image processing now supports WebP
+- Fix `zola serve` failing for some static files
+- Fix `zola serve` not picking up directory renaming
+- Add `path` to the taxonomy terms to be on par with pages and sections
+
 ## 0.13.0 (2021-01-09)
 
 - Enable HTML minification

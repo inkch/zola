@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::{fs, io, result};
 
-use sha2::{Digest, Sha256, Sha384, Sha512};
+use base64::encode as encode_b64;
+use sha2::{digest, Sha256, Sha384, Sha512};
 use svg_metadata as svg;
 use tera::{from_value, to_value, Error, Function as TeraFn, Result, Value};
 
@@ -89,22 +90,21 @@ fn open_file(search_paths: &[PathBuf], url: &str) -> result::Result<fs::File, io
     Err(io::Error::from(io::ErrorKind::NotFound))
 }
 
-fn compute_file_sha256(mut file: fs::File) -> result::Result<String, io::Error> {
-    let mut hasher = Sha256::new();
+fn compute_file_hash<D: digest::Digest>(
+    mut file: fs::File,
+    base64: bool,
+) -> result::Result<String, io::Error>
+where
+    digest::Output<D>: core::fmt::LowerHex,
+    D: std::io::Write,
+{
+    let mut hasher = D::new();
     io::copy(&mut file, &mut hasher)?;
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-fn compute_file_sha384(mut file: fs::File) -> result::Result<String, io::Error> {
-    let mut hasher = Sha384::new();
-    io::copy(&mut file, &mut hasher)?;
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-fn compute_file_sha512(mut file: fs::File) -> result::Result<String, io::Error> {
-    let mut hasher = Sha512::new();
-    io::copy(&mut file, &mut hasher)?;
-    Ok(format!("{:x}", hasher.finalize()))
+    if base64 {
+        Ok(format!("{}", encode_b64(hasher.finalize())))
+    } else {
+        Ok(format!("{:x}", hasher.finalize()))
+    }
 }
 
 fn file_not_found_err(search_paths: &[PathBuf], url: &str) -> Result<Value> {
@@ -155,7 +155,9 @@ impl TeraFn for GetUrl {
             }
 
             if cachebust {
-                match open_file(&self.search_paths, &path).and_then(compute_file_sha256) {
+                match open_file(&self.search_paths, &path)
+                    .and_then(|f| compute_file_hash::<Sha256>(f, false))
+                {
                     Ok(hash) => {
                         permalink = format!("{}?h={}", permalink, hash);
                     }
@@ -178,6 +180,7 @@ impl GetFileHash {
 }
 
 const DEFAULT_SHA_TYPE: u16 = 384;
+const DEFAULT_BASE64: bool = false;
 
 impl TeraFn for GetFileHash {
     fn call(&self, args: &HashMap<String, Value>) -> Result<Value> {
@@ -192,15 +195,30 @@ impl TeraFn for GetFileHash {
             "`get_file_hash`: `sha_type` must be 256, 384 or 512"
         )
         .unwrap_or(DEFAULT_SHA_TYPE);
+        let base64 = optional_arg!(
+            bool,
+            args.get("base64"),
+            "`get_file_hash`: `base64` must be true or false"
+        )
+        .unwrap_or(DEFAULT_BASE64);
 
-        let compute_hash_fn = match sha_type {
-            256 => compute_file_sha256,
-            384 => compute_file_sha384,
-            512 => compute_file_sha512,
-            _ => return Err("`get_file_hash`: `sha_type` must be 256, 384 or 512".into()),
+        let f = match open_file(&self.search_paths, &path) {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(format!(
+                    "File {} could not be open: {} (searched in {:?})",
+                    path, e, self.search_paths
+                )
+                .into());
+            }
         };
 
-        let hash = open_file(&self.search_paths, &path).and_then(compute_hash_fn);
+        let hash = match sha_type {
+            256 => compute_file_hash::<Sha256>(f, base64),
+            384 => compute_file_hash::<Sha384>(f, base64),
+            512 => compute_file_hash::<Sha512>(f, base64),
+            _ => return Err("`get_file_hash`: Invalid sha value".into()),
+        };
 
         match hash {
             Ok(digest) => Ok(to_value(digest).unwrap()),
@@ -221,7 +239,6 @@ impl ResizeImage {
 
 static DEFAULT_OP: &str = "fill";
 static DEFAULT_FMT: &str = "auto";
-const DEFAULT_Q: u8 = 75;
 
 impl TeraFn for ResizeImage {
     fn call(&self, args: &HashMap<String, Value>) -> Result<Value> {
@@ -248,10 +265,11 @@ impl TeraFn for ResizeImage {
                 .unwrap_or_else(|| DEFAULT_FMT.to_string());
 
         let quality =
-            optional_arg!(u8, args.get("quality"), "`resize_image`: `quality` must be a number")
-                .unwrap_or(DEFAULT_Q);
-        if quality == 0 || quality > 100 {
-            return Err("`resize_image`: `quality` must be in range 1-100".to_string().into());
+            optional_arg!(u8, args.get("quality"), "`resize_image`: `quality` must be a number");
+        if let Some(quality) = quality {
+            if quality == 0 || quality > 100 {
+                return Err("`resize_image`: `quality` must be in range 1-100".to_string().into());
+            }
         }
 
         let mut imageproc = self.imageproc.lock().unwrap();
@@ -820,11 +838,36 @@ title = "A title"
     }
 
     #[test]
+    fn can_get_file_hash_sha256_base64() {
+        let static_fn = GetFileHash::new(vec![TEST_CONTEXT.static_path.clone()]);
+        let mut args = HashMap::new();
+        args.insert("path".to_string(), to_value("app.css").unwrap());
+        args.insert("sha_type".to_string(), to_value(256).unwrap());
+        args.insert("base64".to_string(), to_value(true).unwrap());
+        assert_eq!(static_fn.call(&args).unwrap(), "Vy5pHcaMP81lOuRjJhvbOPNdxvAXFdnOaHmTGd0ViEA=");
+    }
+
+    #[test]
     fn can_get_file_hash_sha384() {
         let static_fn = GetFileHash::new(vec![TEST_CONTEXT.static_path.clone()]);
         let mut args = HashMap::new();
         args.insert("path".to_string(), to_value("app.css").unwrap());
-        assert_eq!(static_fn.call(&args).unwrap(), "141c09bd28899773b772bbe064d8b718fa1d6f2852b7eafd5ed6689d26b74883b79e2e814cd69d5b52ab476aa284c414");
+        assert_eq!(
+            static_fn.call(&args).unwrap(),
+            "141c09bd28899773b772bbe064d8b718fa1d6f2852b7eafd5ed6689d26b74883b79e2e814cd69d5b52ab476aa284c414"
+            );
+    }
+
+    #[test]
+    fn can_get_file_hash_sha384_base64() {
+        let static_fn = GetFileHash::new(vec![TEST_CONTEXT.static_path.clone()]);
+        let mut args = HashMap::new();
+        args.insert("path".to_string(), to_value("app.css").unwrap());
+        args.insert("base64".to_string(), to_value(true).unwrap());
+        assert_eq!(
+            static_fn.call(&args).unwrap(),
+            "FBwJvSiJl3O3crvgZNi3GPodbyhSt+r9XtZonSa3SIO3ni6BTNadW1KrR2qihMQU"
+        );
     }
 
     #[test]
@@ -833,7 +876,23 @@ title = "A title"
         let mut args = HashMap::new();
         args.insert("path".to_string(), to_value("app.css").unwrap());
         args.insert("sha_type".to_string(), to_value(512).unwrap());
-        assert_eq!(static_fn.call(&args).unwrap(), "379dfab35123b9159d9e4e92dc90e2be44cf3c2f7f09b2e2df80a1b219b461de3556c93e1a9ceb3008e999e2d6a54b4f1d65ee9be9be63fa45ec88931623372f");
+        assert_eq!(
+            static_fn.call(&args).unwrap(),
+            "379dfab35123b9159d9e4e92dc90e2be44cf3c2f7f09b2e2df80a1b219b461de3556c93e1a9ceb3008e999e2d6a54b4f1d65ee9be9be63fa45ec88931623372f"
+        );
+    }
+
+    #[test]
+    fn can_get_file_hash_sha512_base64() {
+        let static_fn = GetFileHash::new(vec![TEST_CONTEXT.static_path.clone()]);
+        let mut args = HashMap::new();
+        args.insert("path".to_string(), to_value("app.css").unwrap());
+        args.insert("sha_type".to_string(), to_value(512).unwrap());
+        args.insert("base64".to_string(), to_value(true).unwrap());
+        assert_eq!(
+            static_fn.call(&args).unwrap(),
+            "N536s1EjuRWdnk6S3JDivkTPPC9/CbLi34Chshm0Yd41Vsk+GpzrMAjpmeLWpUtPHWXum+m+Y/pF7IiTFiM3Lw=="
+        );
     }
 
     #[test]
@@ -841,12 +900,9 @@ title = "A title"
         let static_fn = GetFileHash::new(vec![TEST_CONTEXT.static_path.clone()]);
         let mut args = HashMap::new();
         args.insert("path".to_string(), to_value("doesnt-exist").unwrap());
-        assert_eq!(
-            format!(
-                "file `doesnt-exist` not found; searched in {}",
-                TEST_CONTEXT.static_path.to_str().unwrap()
-            ),
-            format!("{}", static_fn.call(&args).unwrap_err())
-        );
+        let err = format!("{}", static_fn.call(&args).unwrap_err());
+        println!("{:?}", err);
+
+        assert!(err.contains("File doesnt-exist could not be open"));
     }
 }

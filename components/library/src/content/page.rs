@@ -62,6 +62,10 @@ pub struct Page {
     pub earlier: Option<DefaultKey>,
     /// The later page, for pages sorted by date
     pub later: Option<DefaultKey>,
+    /// The previous page, for pages sorted by title
+    pub title_prev: Option<DefaultKey>,
+    /// The next page, for pages sorted by title
+    pub title_next: Option<DefaultKey>,
     /// The lighter page, for pages sorted by weight
     pub lighter: Option<DefaultKey>,
     /// The heavier page, for pages sorted by weight
@@ -486,7 +490,7 @@ Hello world"#;
         let mut config = Config::default();
         config.slugify.paths = SlugifyStrategy::On;
         let res =
-            Page::parse(Path::new(" file with space.md"), "+++\n+++", &config, &PathBuf::new());
+            Page::parse(Path::new(" file with space.md"), "+++\n+++\n", &config, &PathBuf::new());
         assert!(res.is_ok());
         let page = res.unwrap();
         assert_eq!(page.slug, "file-with-space");
@@ -497,7 +501,7 @@ Hello world"#;
     fn can_make_path_from_utf8_filename() {
         let mut config = Config::default();
         config.slugify.paths = SlugifyStrategy::Safe;
-        let res = Page::parse(Path::new("日本.md"), "+++\n++++", &config, &PathBuf::new());
+        let res = Page::parse(Path::new("日本.md"), "+++\n+++\n", &config, &PathBuf::new());
         assert!(res.is_ok());
         let page = res.unwrap();
         assert_eq!(page.slug, "日本");
@@ -679,6 +683,26 @@ Hello world
         assert_eq!(page.slug, "hello");
     }
 
+    // https://github.com/getzola/zola/pull/1323#issuecomment-779401063
+    #[test]
+    fn can_get_date_from_short_date_in_filename_respects_slugification_strategy() {
+        let mut config = Config::default();
+        config.slugify.paths = SlugifyStrategy::Off;
+        let content = r#"
++++
++++
+Hello world
+<!-- more -->"#
+            .to_string();
+        let res =
+            Page::parse(Path::new("2018-10-08_ こんにちは.md"), &content, &config, &PathBuf::new());
+        assert!(res.is_ok());
+        let page = res.unwrap();
+
+        assert_eq!(page.meta.date, Some("2018-10-08".to_string()));
+        assert_eq!(page.slug, " こんにちは");
+    }
+
     #[test]
     fn can_get_date_from_full_rfc3339_date_in_filename() {
         let config = Config::default();
@@ -699,6 +723,30 @@ Hello world
 
         assert_eq!(page.meta.date, Some("2018-10-02T15:00:00Z".to_string()));
         assert_eq!(page.slug, "hello");
+    }
+
+    // https://github.com/getzola/zola/pull/1323#issuecomment-779401063
+    #[test]
+    fn can_get_date_from_full_rfc3339_date_in_filename_respects_slugification_strategy() {
+        let mut config = Config::default();
+        config.slugify.paths = SlugifyStrategy::Off;
+        let content = r#"
++++
++++
+Hello world
+<!-- more -->"#
+            .to_string();
+        let res = Page::parse(
+            Path::new("2018-10-02T15:00:00Z- こんにちは.md"),
+            &content,
+            &config,
+            &PathBuf::new(),
+        );
+        assert!(res.is_ok());
+        let page = res.unwrap();
+
+        assert_eq!(page.meta.date, Some("2018-10-02T15:00:00Z".to_string()));
+        assert_eq!(page.slug, " こんにちは");
     }
 
     #[test]

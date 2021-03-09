@@ -64,8 +64,7 @@ Zola adds a few filters in addition to [those](https://tera.netlify.com/docs/#fi
 in Tera.
 
 ### markdown
-Converts the given variable to HTML using Markdown. This doesn't apply any of the
-features that Zola adds to Markdown; for example, internal links and shortcodes won't work.
+Converts the given variable to HTML using Markdown. Please note that shortcodes evaluated by this filter cannot access the current rendering context. `config` will be available, but accessing `section` or `page` (among others) from a shortcode called within the `markdown` filter will prevent your site from building. See [this discussion](https://github.com/getzola/zola/pull/1358).
 
 By default, the filter will wrap all text in a paragraph. To disable this behaviour, you can
 pass `true` to the inline argument:
@@ -145,26 +144,34 @@ An example is:
 In the case of non-internal links, you can also add a cachebust of the format `?h=<sha256>` at the end of a URL
 by passing `cachebust=true` to the `get_url` function.
 
-
 ### `get_file_hash`
 
-Gets the hash digest for a static file. Supported hashes are SHA-256, SHA-384 (default) and SHA-512. Requires `path`. The `sha_type` key is optional and must be one of 256, 384 or 512.
+Returns the hash digest of a static file. Supported hashing algorithms are
+SHA-256, SHA-384 (default) and SHA-512. Requires `path`. The `sha_type`
+parameter is optional and must be one of 256, 384 or 512.
 
 ```jinja2
 {{/* get_file_hash(path="js/app.js", sha_type=256) */}}
 ```
 
-This can be used to implement subresource integrity. Do note that subresource integrity is typically used when using external scripts, which `get_file_hash` does not support.
+The function can also output a base64-encoded hash value when its `base64`
+parameter is set to `true`. This can be used to implement [subresource
+integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity).
 
 ```jinja2
 <script src="{{/* get_url(path="js/app.js") */}}"
-        integrity="sha384-{{/* get_file_hash(path="js/app.js", sha_type=384) */}}"></script>
+  integrity="sha384-{{ get_file_hash(path="js/app.js", sha_type=384, base64=true) | safe }}"></script>
 ```
 
-Whenever hashing files, whether using `get_file_hash` or `get_url(..., cachebust=true)`, the file is searched for in three places: `static/`, `content/` and the output path (so e.g. compiled SASS can be hashed, too.)
+Do note that subresource integrity is typically used when using external
+scripts, which `get_file_hash` does not support.
 
+Whenever hashing files, whether using `get_file_hash` or `get_url(...,
+cachebust=true)`, the file is searched for in three places: `static/`,
+`content/` and the output path (so e.g. compiled SASS can be hashed, too.)
 
 ### `get_image_metadata`
+
 Gets metadata for an image. This supports common formats like JPEG, PNG, as well as SVG.
 Currently, the only supported keys are `width` and `height`.
 
@@ -212,9 +219,19 @@ As a security precaution, if this file is outside the main site directory, your 
 {% set data = load_data(path="content/blog/story/data.toml") %}
 ```
 
+The optional `required` boolean argument can be set to false so that missing data (HTTP error or local file not found) does not produce an error, but returns a null value instead. However, permission issues with a local file and invalid data that could not be parsed to the requested data format will still produce an error even with `required=false`.
+
+The snippet below outputs the HTML from a Wikipedia page, or "No data found" if the page was not reachable, or did not return a successful HTTP code:
+
+```jinja2
+{% set data = load_data(path="https://en.wikipedia.org/wiki/Commune_of_Paris", required=false) %}
+{% if data %}{{ data | safe }}{% else %}No data found{% endif %}
+```
+
 The optional `format` argument allows you to specify and override which data type is contained
 within the file specified in the `path` argument. Valid entries are `toml`, `json`, `csv`, `bibtex`
 or `plain`. If the `format` argument isn't specified, then the path extension is used.
+
 
 ```jinja2
 {% set data = load_data(path="content/blog/story/data.txt", format="json") %}

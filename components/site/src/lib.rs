@@ -20,7 +20,7 @@ use front_matter::InsertAnchor;
 use library::{find_taxonomies, Library, Page, Paginator, Section, Taxonomy};
 use relative_path::RelativePathBuf;
 use std::time::Instant;
-use templates::render_redirect_template;
+use templates::{load_tera, render_redirect_template};
 use utils::fs::{
     copy_directory, copy_file_if_needed, create_directory, create_file, ensure_directory_exists,
 };
@@ -72,15 +72,16 @@ impl Site {
     pub fn new<P: AsRef<Path>, P2: AsRef<Path>>(path: P, config_file: P2) -> Result<Site> {
         let path = path.as_ref();
         let config_file = config_file.as_ref();
-        let mut config = get_config(config_file);
+        let mut config = get_config(config_file)?;
         config.load_extra_syntaxes(path)?;
 
         if let Some(theme) = config.theme.clone() {
             // Grab data from the extra section of the theme
-            config.merge_with_theme(&path.join("themes").join(&theme).join("theme.toml"))?;
+            config
+                .merge_with_theme(&path.join("themes").join(&theme).join("theme.toml"), &theme)?;
         }
 
-        let tera = tpls::load_tera(path, &config)?;
+        let tera = load_tera(path, &config)?;
 
         let content_path = path.join("content");
         let static_path = path.join("static");
@@ -247,7 +248,10 @@ impl Site {
                         &self.config,
                         &self.base_path,
                     ) {
-                        Err(_) => continue,
+                        Err(e) => {
+                            println!("Failed to load section: {:?}", e);
+                            continue;
+                        }
                         Ok(sec) => sec,
                     };
 
@@ -260,8 +264,13 @@ impl Site {
                     self.add_section(section, false)?;
                 }
             } else {
-                let page = Page::from_file(path, &self.config, &self.base_path)
-                    .expect("error deserialising page");
+                let page = match Page::from_file(path, &self.config, &self.base_path) {
+                    Err(e) => {
+                        println!("Failed to load page: {:?}", e);
+                        continue;
+                    }
+                    Ok(p) => p,
+                };
 
                 // should we skip drafts?
                 if page.meta.draft && !self.include_drafts {
@@ -287,7 +296,7 @@ impl Site {
         // taxonomy Tera fns are loaded in `register_early_global_fns`
         // so we do need to populate it first.
         self.populate_taxonomies()?;
-        tpls::register_early_global_fns(self);
+        tpls::register_early_global_fns(self)?;
         self.populate_sections();
         self.render_markdown()?;
         tpls::register_tera_global_fns(self);
