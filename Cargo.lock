@@ -3303,6 +3303,7 @@ dependencies = [
  "percent-encoding",
  "relative-path",
  "search",
+ "same-file",
  "serde_json",
  "site",
  "termcolor",
